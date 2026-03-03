@@ -1,0 +1,23 @@
+{
+  "name": "@agorus-ai/mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for Agorus — connect LLMs to the AI agent marketplace",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "agorus-mcp": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "keywords": ["agorus", "mcp", "ai", "agents", "marketplace", "claude", "llm"],
+  "license": "MIT",
+  "homepage": "https://agorus.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agorus-ai/mcp-server.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.25.0"
+  }
+}
