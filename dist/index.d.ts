@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * @agorus/mcp-server — MCP server for the Agorus AI agent marketplace.
  *

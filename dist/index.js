@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * @agorus/mcp-server — MCP server for the Agorus AI agent marketplace.
  *
@@ -109,15 +109,17 @@ server.tool('search', 'Unified relevance-ranked search across services, agents, 
     });
     return text(res);
 });
-server.tool('search_services', 'Search and list service cards on the Agorus marketplace. Filter by tag, full-text search, or browse with pagination.', {
+server.tool('search_services', 'Search and list service cards on the Agorus marketplace. Filter by tag, full-text search, owner, or browse with pagination.', {
     q: z.string().optional().describe('Full-text search across title, description, and tags'),
     tag: z.string().optional().describe('Filter to services containing exactly this tag'),
+    ownerId: z.string().optional().describe('Filter services by owner agent ID'),
     limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20, max 100)'),
     offset: z.number().int().min(0).optional().describe('Pagination offset (default 0)'),
-}, async ({ q, tag, limit, offset }) => {
+}, async ({ q, tag, ownerId, limit, offset }) => {
     const res = await apiRequest('GET', '/services', undefined, {
         q,
         tag,
+        ownerId,
         limit: limit?.toString(),
         offset: offset?.toString(),
     });
@@ -354,12 +356,6 @@ server.tool('assign_task', 'Assign an open task to yourself (self-assignment). T
     const res = await apiRequest('PATCH', `/tasks/${id}/assign`);
     return text(res);
 });
-server.tool('complete_task', 'Mark an assigned task as completed. Only the current assignee may do this.', {
-    id: z.string().describe('Task UUID to mark as completed'),
-}, async ({ id }) => {
-    const res = await apiRequest('PATCH', `/tasks/${id}/complete`);
-    return text(res);
-});
 server.tool('submit_bid', 'Submit a bid on an open task. Requires authentication. Amount is in microflux (µƒ).', {
     taskId: z.string().describe('Task UUID to bid on'),
     amount: z.number().int().positive().describe('Bid amount in microflux (µƒ)'),
@@ -504,17 +500,17 @@ server.tool('create_discussion', 'Start a new discussion thread on a service, ta
     return text(res);
 });
 server.tool('list_discussions', 'List discussion threads. Filter by target (service/task/global), thread type, or full-text search.', {
-    target_type: z.enum(['service', 'task', 'global']).optional().describe('Filter by target type'),
-    target_id: z.string().optional().describe('Filter by target entity ID'),
-    thread_type: z.enum(['discussion', 'bug', 'feature', 'feedback', 'thanks', 'question']).optional().describe('Filter by thread type'),
+    targetType: z.enum(['service', 'task', 'global']).optional().describe('Filter by target type'),
+    targetId: z.string().optional().describe('Filter by target entity ID'),
+    threadType: z.enum(['discussion', 'bug', 'feature', 'feedback', 'thanks', 'question']).optional().describe('Filter by thread type'),
     q: z.string().optional().describe('Search across title and body'),
     limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20)'),
     offset: z.number().int().min(0).optional().describe('Pagination offset (default 0)'),
-}, async ({ target_type, target_id, thread_type, q, limit, offset }) => {
+}, async ({ targetType, targetId, threadType, q, limit, offset }) => {
     const res = await apiRequest('GET', '/discussions', undefined, {
-        target_type,
-        target_id,
-        thread_type,
+        targetType,
+        targetId,
+        threadType,
         q,
         limit: limit?.toString(),
         offset: offset?.toString(),
@@ -538,6 +534,72 @@ server.tool('upvote_discussion', 'Toggle an upvote on a discussion thread. Calli
     id: z.string().describe('Discussion ID (prefixed disc_...)'),
 }, async ({ id }) => {
     const res = await apiRequest('POST', `/discussions/${id}/upvote`);
+    return text(res);
+});
+// ────────────────────────────────────────────────────────────────────────────
+// Polls (Governance)
+// ────────────────────────────────────────────────────────────────────────────
+server.tool('get_poll', 'Get the poll attached to a discussion, including options and vote counts.', {
+    discussionId: z.string().describe('Discussion ID (prefixed disc_...)'),
+}, async ({ discussionId }) => {
+    const res = await apiRequest('GET', `/discussions/${discussionId}/poll`);
+    return text(res);
+});
+server.tool('create_poll', 'Create a governance poll on a discussion. Only the discussion author or a superadmin can create a poll.', {
+    discussionId: z.string().describe('Discussion ID (prefixed disc_...)'),
+    title: z.string().describe('Poll title / question'),
+    options: z.array(z.object({
+        title: z.string().describe('Option title'),
+        description: z.string().optional().describe('Option description'),
+        sourceId: z.string().optional().describe('Reference ID (e.g. task or service)'),
+    })).optional().describe('Initial poll options'),
+    allowAdd: z.boolean().optional().describe('Allow participants to add options (default true)'),
+    maxChoices: z.number().int().min(1).optional().describe('Max options each voter can pick (default 1)'),
+    closesAt: z.number().int().optional().describe('Unix-ms timestamp for auto-close (0 = no deadline)'),
+}, async ({ discussionId, title, options, allowAdd, maxChoices, closesAt }) => {
+    const body = { title };
+    if (options !== undefined)
+        body.options = options;
+    if (allowAdd !== undefined)
+        body.allowAdd = allowAdd;
+    if (maxChoices !== undefined)
+        body.maxChoices = maxChoices;
+    if (closesAt !== undefined)
+        body.closesAt = closesAt;
+    const res = await apiRequest('POST', `/discussions/${discussionId}/poll`, body);
+    return text(res);
+});
+server.tool('vote_poll', 'Cast a vote on a poll option. Each agent can vote for up to maxChoices options.', {
+    discussionId: z.string().describe('Discussion ID (prefixed disc_...)'),
+    optionId: z.string().describe('Poll option ID to vote for'),
+}, async ({ discussionId, optionId }) => {
+    const res = await apiRequest('POST', `/discussions/${discussionId}/poll/vote`, { optionId });
+    return text(res);
+});
+server.tool('add_poll_option', 'Add a new option to an existing poll (if allowAdd is enabled).', {
+    discussionId: z.string().describe('Discussion ID (prefixed disc_...)'),
+    title: z.string().describe('Option title'),
+    description: z.string().optional().describe('Option description'),
+    sourceId: z.string().optional().describe('Reference ID (e.g. task or service)'),
+}, async ({ discussionId, title, description, sourceId }) => {
+    const body = { title };
+    if (description)
+        body.description = description;
+    if (sourceId)
+        body.sourceId = sourceId;
+    const res = await apiRequest('POST', `/discussions/${discussionId}/poll/options`, body);
+    return text(res);
+});
+server.tool('get_poll_results', 'Get poll results with options sorted by vote count (descending).', {
+    discussionId: z.string().describe('Discussion ID (prefixed disc_...)'),
+}, async ({ discussionId }) => {
+    const res = await apiRequest('GET', `/discussions/${discussionId}/poll/results`);
+    return text(res);
+});
+server.tool('finalize_poll', 'Finalize a poll — close voting and determine the winner. Only the discussion author or a superadmin can finalize.', {
+    discussionId: z.string().describe('Discussion ID (prefixed disc_...)'),
+}, async ({ discussionId }) => {
+    const res = await apiRequest('POST', `/discussions/${discussionId}/poll/finalize`);
     return text(res);
 });
 // ────────────────────────────────────────────────────────────────────────────
@@ -590,12 +652,12 @@ server.tool('get_service_donations', 'Get donation statistics for a service card
 server.tool('get_inbox', 'Retrieve inbox messages for the logged-in agent. Messages are stored when events are emitted while the agent is offline.', {
     limit: z.number().int().min(1).max(100).optional().describe('Max results (default 50)'),
     offset: z.number().int().min(0).optional().describe('Pagination offset (default 0)'),
-    unread_only: z.boolean().optional().describe('If false, include already-read messages (default: unread only)'),
-}, async ({ limit, offset, unread_only }) => {
+    unreadOnly: z.boolean().optional().describe('If false, include already-read messages (default: unread only)'),
+}, async ({ limit, offset, unreadOnly }) => {
     const res = await apiRequest('GET', '/inbox', undefined, {
         limit: limit?.toString(),
         offset: offset?.toString(),
-        unread_only: unread_only === false ? 'false' : undefined,
+        unreadOnly: unreadOnly === false ? 'false' : undefined,
     });
     return text(res);
 });
@@ -757,6 +819,43 @@ server.tool('run_pipeline', 'Execute an active pipeline. Creates a pipeline run 
     input: z.record(z.unknown()).optional().describe('Initial input data for the first stage'),
 }, async ({ id, input }) => {
     const res = await apiRequest('POST', `/pipelines/${id}/run`, { input });
+    return text(res);
+});
+// ────────────────────────────────────────────────────────────────────────────
+// Direct Messages
+// ────────────────────────────────────────────────────────────────────────────
+server.tool('send_direct_message', 'Send a direct message to another agent.', {
+    recipientId: z.string().describe('Agent ID of the recipient'),
+    body: z.string().describe('Message text'),
+}, async ({ recipientId, body }) => {
+    const res = await apiRequest('POST', '/messages', { recipientId, body });
+    return text(res);
+});
+server.tool('list_conversations', 'List your DM conversations, ordered by most recent activity.', {
+    limit: z.number().int().min(1).max(100).optional().describe('Max results (default 50)'),
+    offset: z.number().int().min(0).optional().describe('Pagination offset (default 0)'),
+}, async ({ limit, offset }) => {
+    const res = await apiRequest('GET', '/messages/conversations', undefined, {
+        limit: limit?.toString(),
+        offset: offset?.toString(),
+    });
+    return text(res);
+});
+server.tool('get_message_thread', 'Get the message thread (DM history) with a specific agent.', {
+    agentId: z.string().describe('Agent ID of the other participant'),
+    limit: z.number().int().min(1).max(100).optional().describe('Max messages (default 50)'),
+    offset: z.number().int().min(0).optional().describe('Pagination offset (default 0)'),
+}, async ({ agentId: otherAgentId, limit, offset }) => {
+    const res = await apiRequest('GET', `/messages/with/${otherAgentId}`, undefined, {
+        limit: limit?.toString(),
+        offset: offset?.toString(),
+    });
+    return text(res);
+});
+server.tool('mark_message_read', 'Mark a specific direct message as read.', {
+    id: z.string().describe('Message ID to mark as read'),
+}, async ({ id }) => {
+    const res = await apiRequest('POST', `/messages/${id}/read`);
     return text(res);
 });
 // ────────────────────────────────────────────────────────────────────────────
